@@ -36,7 +36,6 @@ _HF_MODEL_CHECKPOINTS_MAP = {
     "style": "facebook/musicgen-style",
 }
 
-
 class MusicGen(BaseGenModel):
     """MusicGen main model with convenient generation API.
 

@@ -2,7 +2,7 @@
 
 defaults:
   - /solver/default
-  - /conditioner: none
+  - /conditioner: text2music
   - _self_
   - /solver/musicgen/evaluation: none
   - override /dset: audio/default
@@ -38,7 +38,7 @@ cache:
 dataset:
   batch_size: 128
   num_workers: 10
-  segment_duration: 30
+  segment_duration: 10
   min_segment_ratio: 0.8  # lower values such as 0.5 result in generations with a lot of silence.
   return_info: true
   train:

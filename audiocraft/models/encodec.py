@@ -20,7 +20,8 @@ from torch import nn
 from transformers import EncodecModel as HFEncodecModel
 
 from .. import quantization as qt
-
+from ..utils import checkpoint
+from .scalarmodel import ScalarModel
 
 logger = logging.getLogger()
 
@@ -99,6 +100,7 @@ class CompressionModel(ABC, nn.Module):
             - dac_24khz (same)
             - facebook/encodec_24khz (https://huggingface.co/facebook/encodec_24khz)
             - facebook/encodec_32khz (https://huggingface.co/facebook/encodec_32khz)
+            - sqcodec () - make sure the checkpoints have been downloaded at //reference/pretrianed
             - your own model on Hugging Face. Export instructions to come...
         """
 
@@ -108,6 +110,9 @@ class CompressionModel(ABC, nn.Module):
             model_type = name.split('_')[1]
             logger.info("Getting pretrained compression model from DAC %s", model_type)
             model = DAC(model_type)
+        elif name in ['sqcodec']:
+            logger.info("Getting pretrained compression model from SQCodec %s")
+            model = SQCodec()
         elif name in ['debug_compression_model']:
             logger.info("Getting pretrained compression model for debug")
             model = builders.get_debug_compression_model()
@@ -235,6 +240,8 @@ class EncodecModel(CompressionModel):
         x, scale = self.preprocess(x)
         emb = self.encoder(x)
         codes = self.quantizer.encode(emb)
+        # print(codecs.shape, type(codes), codecs[0, :, 2])
+        # fake()
         return codes, scale
 
     def decode(self, codes: torch.Tensor, scale: tp.Optional[torch.Tensor] = None):
@@ -318,6 +325,199 @@ class DAC(CompressionModel):
         assert n >= 1
         assert n <= self.total_codebooks
         self.n_quantizers = n
+
+def decimal_to_ternary_matrix(decimals, D):
+    """
+    Convert a tensor of decimal numbers to a D*T ternary matrix for each batch.
+
+    Arguments
+    ---------
+    decimals : torch.Tensor
+        A 2D tensor of decimal numbers with shape (B, T), where B is the batch size
+        and T is the number of elements in each batch.
+    D : int
+        Number of ternary digits to represent each number (depth).
+
+    Returns
+    -------
+    torch.Tensor
+        A 3D tensor of shape (B, D, T) where each slice along the first dimension
+        corresponds to a batch, and each column is represented as a ternary number.
+    """
+    B, T = decimals.shape
+    ternary_matrix = torch.zeros((B, D, T), dtype=torch.long)
+    for pos in range(D):
+        ternary_matrix[:, pos, :] = decimals % 3  # Modulo operation
+        decimals //= 3  # Floor division for next ternary digit
+
+    return ternary_matrix
+
+
+def ternary_matrix_to_decimal(matrix):
+    """
+    Convert a D*N ternary matrix to a list of decimal numbers.
+    
+    Parameters:
+    - matrix: a 2D numpy array of shape (D, N) where each column is a ternary number.
+    
+    Returns:
+    - A list of integers, each representing the decimal equivalent of a ternary number.
+    """
+    B, D, N = matrix.shape  # B is the batch size, D is the number of digits, N is the number of ternary numbers
+    
+    powers_of_three = 3 ** np.arange(D)  # [3^0, 3^1, ..., 3^(D-1)]
+
+    # Reshape powers_of_three for broadcasting: [D] -> [1, D, 1]
+    powers_of_three = powers_of_three[:, np.newaxis]  # Shape [D, 1]
+
+    # Compute dot product using broadcasting: matrix * powers_of_three along D axis
+    decimals = np.sum(matrix * powers_of_three, axis=1)  # Sum along the D axis
+
+    return decimals
+
+class SQCodec(CompressionModel):
+    """SQCodec adapted tokenizer version for LLM training
+    Author: Haici Yang
+
+    """
+    frame_rate: float = 0
+    sample_rate: int = 0
+    channels: int = 0
+
+    def __init__(
+        self,
+        checkpoint_path='//reference/pretrained/SQ-Codec/ckpt_00190000.pth',
+        sample_rate=16000,
+        dim_codebook=19683,
+        n_codebook=4,
+        bw=2,
+        clip_length=450,
+    ):
+        super(SQCodec, self).__init__()
+        # self.ckpt_path = os.path.join('')
+        self.ckpt_path = checkpoint.resolve_checkpoint_path(checkpoint_path, use_fsdp=False)
+
+        self.scalar_codec = self.build_codec_model()
+        self.sample_rate = sample_rate
+        self.dim_codebook = dim_codebook
+        self.n_codebook = n_codebook
+        self.bw = bw
+        self.mask_id = self.dim_codebook * self.n_codebook
+    
+    def build_codec_model(self,):
+        scalar_codec = ScalarModel()  
+        parameter_dict = torch.load(self.ckpt_path)
+        scalar_codec.load_state_dict(parameter_dict['codec_model']) # load model
+        print('Loaded SQCodec from pretrained checkpoint.')
+        return scalar_codec
+
+    @property
+    def total_codebooks(self):
+        """Total number of quantizer codebooks available."""
+        return self.n_codebook
+
+    @property
+    def num_codebooks(self):
+        """Active number of codebooks used by the quantizer."""
+        return self.n_codebook
+
+    def set_num_codebooks(self, n: int):
+        """Set the active number of codebooks used by the quantizer.
+        """
+        assert n >= 1
+        assert n <= self.total_codebooks
+        self.n_codebook = n
+
+    @property
+    def cardinality(self):
+        """Cardinality of each codebook."""
+        return self.dim_codebook
+    
+    @property
+    def channels(self) -> int:
+        return 1
+    
+    @property
+    def frame_rate(self) -> int:
+        return 50
+    
+    def forward(self, x: torch.Tensor):
+        # We don't support training with this.
+        raise NotImplementedError("Forward and training with SQCodec not supported.")
+
+    def encode(self, x: torch.Tensor):
+        """
+        Args:
+            x (torch.Tensor): Float tensor of shape [B, C, T]
+
+        Returns:
+            codes, scale (tuple of torch.Tensor, torch.Tensor): Tuple composed of:
+                codes: a float tensor of shape [B, K, T] with K the number of codebooks used and T the timestep.
+        """
+        assert x.dim() == 3
+        compressed = self.scalar_codec.encode(x) # B, dim, len
+        # compressed = compressed.squeeze(0) # dim, len
+        chunks = compressed.chunk(self.n_codebook, dim=1) # 
+        codec_ls = []
+        for i, chunk in enumerate(chunks):
+            # chunk = int(chunk.detach().cpu().numpy()) + 1
+            chunk = chunk.detach().cpu().numpy() #.int() + 1
+            chunk= chunk.astype(np.int32) + 1 # .astype(np.int32)
+            tmp_codec = ternary_matrix_to_decimal(chunk) # 
+            codec_ls.append(torch.from_numpy(tmp_codec).to(torch.int64))
+
+        codec_ls = torch.stack(codec_ls, dim=1)
+
+        return codec_ls.to('cuda'), None
+
+    def decode(self, codes: torch.Tensor, scale: tp.Optional[torch.Tensor] = None):
+        
+        """Decode the given codes to a reconstructed representation, using the scale to perform
+        audio denormalization if needed.
+
+        Args:
+            codes (torch.Tensor): Int tensor of shape [B, K, T]
+        Returns:
+            out (torch.Tensor): Float tensor of shape [B, C, T], the reconstructed audio.
+        """
+
+        assert scale == None
+        emb_quant = self.decode_latent(codes)
+        out = self.scalar_codec.decode(emb_quant.float().to('cuda'))
+
+        return out
+
+    def decode_latent(self, codes: torch.Tensor):
+        """ Get 
+        Args:
+            codes (torch.Tensor): Int tensor of shape [B, K, T]; K is the number of codebooks
+
+        Returns:
+            codes, scale (tuple of torch.Tensor, torch.Tensor): Tuple composed of:
+                codes: a float tensor of shape [B, K, T] with K the number of codebooks used and T the timestep.
+        """
+        # print(codes.dim())
+        assert codes.dim() == 3
+        # assert len(codes) % self.n_codebook == 0
+        # codes = codes.view(-1, self.n_codebook).transpose(0, 1) # n, len
+        # for i in range(self.n_codebook):
+        #     codes[:,i,:] -= i * self.dim_codebook
+        # emb_quant = []
+        # for i in range(codes.shape[0]):
+        #     tmp = decimal_to_ternary_matrix(codes[i,:], D=9) - 1
+        #     emb_quant.append(tmp)
+        # emb_quant = torch.cat(emb_quant, dim=0) # 沿着0维度合并
+        # emb_quant = emb_quant.unsqueeze(0) # 1, n, len
+
+        for i in range(self.n_codebook):
+            codes[:, i, :] -= i * self.dim_codebook
+        emb_quant = []
+        for i in range(self.n_codebook):
+            tmp_list = decimal_to_ternary_matrix(codes[:, i, :], D=9) - 1
+            emb_quant.append(tmp_list)
+        emb_quant = torch.cat(emb_quant, dim=1)
+
+        return emb_quant
 
 
 class HFEncodecCompressionModel(CompressionModel):
@@ -504,3 +704,13 @@ class InterleaveStereoCompressionModel(CompressionModel):
     def decode_latent(self, codes: torch.Tensor):
         """Decode from the discrete codes to continuous latent space."""
         raise NotImplementedError("Not supported by interleaved stereo wrapped models.")
+    
+
+if __name__ == '__main__':
+    sqcodec = SQCodec(checkpoint_path='//reference/pretrained/SQ-Codec/ckpt_00190000.pth').to('cuda')
+    x = torch.rand(1, 1, 48000).to('cuda')
+    q = sqcodec.encode(x)
+    print(q.shape)
+    y = sqcodec.decode(q)
+    print(y.shape)
+

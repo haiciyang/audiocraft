@@ -11,12 +11,14 @@ from ...environment import AudioCraftEnvironment
 @LMExplorer
 def explorer(launcher):
     partitions = AudioCraftEnvironment.get_slurm_partitions(['team', 'global'])
-    launcher.slurm_(gpus=32, partition=partitions)
+    launcher.slurm_(gpus=8, partition=partitions)
     launcher.bind_(solver='musicgen/musicgen_base_32khz')
     # replace this by the desired music dataset
-    launcher.bind_(dset='internal/music_400k_32khz')
+    # launcher.bind_(dset='internal/music_400k_32khz')
+    launcher.bind_(dset='audio/example')
 
     fsdp = {'autocast': False, 'fsdp.use': True}
+    small = {'model/lm/model_scale': 'small'}
     medium = {'model/lm/model_scale': 'medium'}
     large = {'model/lm/model_scale': 'large'}
 
@@ -27,17 +29,17 @@ def explorer(launcher):
 
     launcher.bind_(fsdp)
 
-    launcher.slurm_(gpus=32).bind_(label='32gpus')
+    launcher.slurm_(gpus=8).bind_(label='8gpus')
     with launcher.job_array():
         sub = launcher.bind()
-        sub()
+        sub(small)
 
-    launcher.slurm_(gpus=64).bind_(label='64gpus')
-    with launcher.job_array():
-        sub = launcher.bind()
-        sub(medium, adam)
+    # launcher.slurm_(gpus=64).bind_(label='64gpus')
+    # with launcher.job_array():
+    #     sub = launcher.bind()
+    #     sub(medium, adam)
 
-    launcher.slurm_(gpus=96).bind_(label='96gpus')
-    with launcher.job_array():
-        sub = launcher.bind()
-        sub(large, cfg_low, wd_low, adam, {'optim.max_norm': 3})
+    # launcher.slurm_(gpus=96).bind_(label='96gpus')
+    # with launcher.job_array():
+    #     sub = launcher.bind()
+    #     sub(large, cfg_low, wd_low, adam, {'optim.max_norm': 3})

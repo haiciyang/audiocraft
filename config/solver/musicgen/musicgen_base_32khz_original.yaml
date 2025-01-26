@@ -7,7 +7,6 @@ defaults:
   - musicgen/default
   - /model: lm/musicgen_lm
   - override /dset: audio/example
-  # - override /solver/musicgen/evaluation: objective_eval
   - _self_
 
 autocast: true
@@ -21,20 +20,15 @@ compression_model_checkpoint: //pretrained/facebook/encodec_32khz
 
 channels: 1
 sample_rate: 32000
+
 deadlock:
   use: true  # deadlock detection
 
 dataset:
-  batch_size: 32  # 8 GPUs
+  batch_size: 72  # 8 GPUs
   num_workers: 16
   sample_on_weight: false  # Uniform sampling all the way
   sample_on_duration: false  # Uniform sampling all the way
-
-conditioners:
-  description:
-    model: t5
-    t5:
-      name: t5-small
 
 generate:
   lm:

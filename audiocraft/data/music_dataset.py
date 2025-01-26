@@ -78,9 +78,9 @@ class MusicInfo(AudioInfo):
             preprocess_func = get_bpm
         elif attribute == 'key':
             preprocess_func = get_musical_key
-        elif attribute in ['moods', 'keywords']:
+        elif attribute in ['moods', 'keywords', 'genre']:
             preprocess_func = get_keyword_list
-        elif attribute in ['genre', 'name', 'instrument']:
+        elif attribute in ['name', 'instrument']:
             preprocess_func = get_keyword
         elif attribute in ['title', 'artist', 'description']:
             preprocess_func = get_string
@@ -109,6 +109,7 @@ class MusicInfo(AudioInfo):
                 if preprocess_func:
                     value = preprocess_func(value)
                 _dictionary[_field.name] = value
+
         return cls(**_dictionary)
 
 
@@ -218,9 +219,10 @@ class MusicDataset(InfoAudioDataset):
             self.paraphraser = Paraphraser(paraphrase_source, paraphrase_p)
 
     def __getitem__(self, index):
-        wav, info = super().__getitem__(index)
+        wav, info = super().__getitem__(index) # wav (1, 16000)
         info_data = info.to_dict()
         music_info_path = Path(info.meta.path).with_suffix('.json')
+        # print('music_info_path: ', music_info_path) /mm0/hyang/Projects/audiocraft/dataset/example/electro_2.json
 
         if Path(music_info_path).exists():
             with open(music_info_path, 'r') as json_file:
@@ -238,7 +240,7 @@ class MusicDataset(InfoAudioDataset):
         music_info.self_wav = WavCondition(
             wav=wav[None], length=torch.tensor([info.n_frames]),
             sample_rate=[info.sample_rate], path=[info.meta.path], seek_time=[info.seek_time])
-
+        
         for att in self.joint_embed_attributes:
             att_value = getattr(music_info, att)
             joint_embed_cond = JointEmbedCondition(

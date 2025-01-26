@@ -1,0 +1,57 @@
+
+srun -N 1 -n 1 -c 16 -p gpu_48 --gpus 2 -w node02 --pty /bin/bash
+
+srun -N 1 -n 1 -c 16 -p gpu_48 --gpus 2 --pty /bin/bash
+
+srun -N 1 -n 1 -c 16 -G 2 --pty bash
+
+
+python -m audiocraft.data.audio_dataset /local-data/hyang/fma_large_wav_splits/val egs/fma_local_valid/data.jsonl.gz
+
+/db/original/public/fma/fma_large
+
+
+--- training ----
+### Encodec 32khz
+dora run -d solver=musicgen/musicgen_base_32khz model/lm/model_scale=small 
+
+### Encodec 32khz
+dora run -d solver=musicgen/musicgen_baseline model/lm/model_scale=small compression_model_checkpoint=//pretrained/facebook/encodec_32khz sample_rate=32000 transformer_lm.card=2048 transformer_lm.n_q=4 +compression_model_n_q=4 codebooks_pattern.delay.delays=[0,1,2,3]
+
+### Encode 24khz
+dora run -d solver=musicgen/musicgen_baseline compression_model_checkpoint=//pretrained/facebook/encodec_24khz sample_rate=24000 transformer_lm.card=1024 transformer_lm.n_q=8 +compression_model_n_q=8 codebooks_pattern.delay.delays=[0,1,2,3,4,5,6,7]
+
+# DAC 24khz
+dora run -d solver=musicgen/musicgen_baseline compression_model_checkpoint=//pretrained/dac_24khz sample_rate=24000 transformer_lm.card=1024 transformer_lm.n_q=9 +compression_model_n_q=9 codebooks_pattern.delay.delays=[0,1,2,3,4,5,6,7,8] dataset.batch_size=32 
+
+### DAC 44khz
+dora run -d solver=musicgen/musicgen_baseline compression_model_checkpoint=//pretrained/dac_44khz sample_rate=44100 transformer_lm.card=1024 transformer_lm.n_q=9 +compression_model_n_q=9 codebooks_pattern.delay.delays=[0,1,2,3,4,5,6,7,8] dataset.batch_size=32
+
+# SQCodec
+dora run -d solver=musicgen/musicgen_baseline compression_model_checkpoint=//pretrained/sqcodec sample_rate=16000 transformer_lm.card=19683 transformer_lm.n_q=4 +compression_model_n_q=4 codebooks_pattern.delay.delays=[0,1,2,3] dataset.batch_size=32 
+
+### 
+
+
+--- evaluation ----
+# /frechet_audio_distance
+dora run solver=musicgen/musicgen_base_32khz execute_only=evaluate model/lm/model_scale=small compression_model_checkpoint=//pretrained/facebook/encodec_32khz conditioner=text2music sample_rate=32000 dataset.batch_size=8 continue_from=//sig/cc23072e solver/musicgen/evaluation=objective_eval evaluate.metrics.fad=true +metrics.fad.bin=/mm0/hyang/Projects/google-research
+
+
+dora run solver=musicgen/musicgen_base_32khz execute_only=evaluate model/lm/model_scale=small compression_model_checkpoint=//pretrained/facebook/encodec_32khz conditioner=text2music sample_rate=32000 dataset.batch_size=8 continue_from=//sig/cc23072e solver/musicgen/evaluation=objective_eval evaluate.metrics.fad=false evaluate.metrics.kld=true metrics.kld.model=passt evaluate.metrics.text_consistency=false evaluate.remove_text_conditioning
+evaluate.metrics.text_consistency=true metrics.text_consistency.model=clap
+
+dora run solver=musicgen/musicgen_base_32khz execute_only=evaluate model/lm/model_scale=small compression_model_checkpoint=//pretrained/facebook/encodec_32khz conditioner=text2music sample_rate=32000 dataset.batch_size=8 continue_from=//sig/cc23072e solver/musicgen/evaluation=objective_eval evaluate.metrics.fad=false evaluate.metrics.kld=false metrics.kld.model=passt evaluate.metrics.text_consistency=true metrics.text_consistency.model=clap
+
+evaluate.metrics.text_consistency=false evaluate.remove_text_conditioning
+
+
+dora run <...> evaluate.metrics.kld=true metrics.kld.model=passt
+
+
+dora run solver=audiogen/survey_baseline execute_only=evaluate compression_model_checkpoint=//pretrained/facebook/encodec_32khz sample_rate=32000 dataset.batch_size=8 dataset.train.batch_size=16 continue_from=//sig/085acb25 solver/audiogen/evaluation=objective_eval evaluate.metrics.fad=false +evaluate.remove_text_conditioning=False
+
+
+
+
+

@@ -39,6 +39,7 @@ class MusicGenSolver(base.StandardSolver):
     def __init__(self, cfg: omegaconf.DictConfig):
         super().__init__(cfg)
         # easier access to sampling parameters
+
         self.generation_params = {
             'use_sampling': self.cfg.generate.lm.use_sampling,
             'temp': self.cfg.generate.lm.temp,
@@ -374,6 +375,7 @@ class MusicGenSolver(base.StandardSolver):
                 mask = padding_mask & model_output.mask & style_mask
             else:
                 mask = padding_mask & model_output.mask
+
             ce, ce_per_codebook = self._compute_cross_entropy(logits, audio_tokens, mask)
             loss = ce
         self.deadlock_detect.update('loss')
@@ -613,6 +615,7 @@ class MusicGenSolver(base.StandardSolver):
     def train(self):
         """Train stage.
         """
+
         if self._cached_batch_writer is not None:
             self._cached_batch_writer.start_epoch(self.epoch)
         if self._cached_batch_loader is None:

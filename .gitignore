@@ -60,3 +60,10 @@ dataset/*
 /notebooks
 /local_scripts
 /notes
+pretrained/
+clap/
+slurm_output/
+assets/
+sample_results/
+saved_trainings/
+prepare_data/

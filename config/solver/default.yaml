@@ -45,8 +45,8 @@ dataset:
     return_info: true
 
 checkpoint:
-  save_last: true
-  save_every: null
+  save_last: null
+  save_every: true
   keep_last: null
   keep_every_states: null
 
