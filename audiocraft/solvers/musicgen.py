@@ -683,6 +683,12 @@ class MusicGenSolver(base.StandardSolver):
                 )
                 y_pred = gen_outputs['gen_audio'].detach()
                 y_pred = y_pred[..., :audio.shape[-1]]
+                if audio.shape[-1] != y_pred.shape[-1]:
+                    self.logger.warning(
+                        f"Generated audio has different length ({y_pred.shape[-1]}) than original audio ({audio.shape[-1]}), "
+                        f"this is mot likely a tokeniser padding thing and not neccesarily an issue")
+                    # pad the generated audio with zeros
+                    y_pred = F.pad(y_pred, (0, audio.shape[-1] - y_pred.shape[-1]), value=0)
 
                 normalize_kwargs = dict(self.cfg.generate.audio)
                 normalize_kwargs.pop('format', None)
@@ -695,10 +701,22 @@ class MusicGenSolver(base.StandardSolver):
                 if fad is not None:
                     if self.cfg.metrics.fad.use_gt:
                         y_pred = get_compressed_audio(y).cpu()
+                        if audio.shape[-1] != y_pred.shape[-1]:
+                            self.logger.warning(
+                                f"Generated audio has different length ({y_pred.shape[-1]}) than original audio ({audio.shape[-1]}), "
+                                f"this is mot likely a tokeniser padding thing and not neccesarily an issue")
+                            # pad the generated audio with zeros
+                            y_pred = F.pad(y_pred, (0, audio.shape[-1] - y_pred.shape[-1]), value=0)
                     fad.update(y_pred, y, sizes, sample_rates, audio_stems)
                 if kldiv is not None:
                     if self.cfg.metrics.kld.use_gt:
                         y_pred = get_compressed_audio(y).cpu()
+                        if audio.shape[-1] != y_pred.shape[-1]:
+                            self.logger.warning(
+                                f"Generated audio has different length ({y_pred.shape[-1]}) than original audio ({audio.shape[-1]}), "
+                                f"this is mot likely a tokeniser padding thing and not neccesarily an issue")
+                            # pad the generated audio with zeros
+                            y_pred = F.pad(y_pred, (0, audio.shape[-1] - y_pred.shape[-1]), value=0)
                     kldiv.update(y_pred, y, sizes, sample_rates)
                 if text_consistency is not None:
                     texts = [m.description for m in meta]
