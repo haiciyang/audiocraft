@@ -679,6 +679,7 @@ class MusicGenSolver(base.StandardSolver):
 
                 gen_outputs = self.run_generate_step(
                     batch, gen_duration=target_duration,
+                    prompt_duration=self.cfg.evaluate.get('prompt_duration', None),
                     remove_text_conditioning=self.cfg.evaluate.remove_text_conditioning
                 )
                 y_pred = gen_outputs['gen_audio'].detach()
