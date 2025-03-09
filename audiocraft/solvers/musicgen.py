@@ -723,6 +723,15 @@ class MusicGenSolver(base.StandardSolver):
                     texts = [m.description for m in meta]
                     if self.cfg.metrics.text_consistency.use_gt:
                         y_pred = y
+                        use_uncompressed = self.cfg.metrics.text_consistency.get('use_uncompressed', False)
+                        if not use_uncompressed:
+                            y_pred = get_compressed_audio(y).cpu()
+                            if audio.shape[-1] != y_pred.shape[-1]:
+                                self.logger.warning(
+                                    f"Generated audio has different length ({y_pred.shape[-1]}) than original audio ({audio.shape[-1]}), "
+                                    f"this is mot likely a tokeniser padding thing and not neccesarily an issue")
+                                # pad the generated audio with zeros
+                                y_pred = F.pad(y_pred, (0, audio.shape[-1] - y_pred.shape[-1]), value=0)
                     text_consistency.update(y_pred, texts, sizes, sample_rates)
                 if chroma_cosine is not None:
                     if self.cfg.metrics.chroma_cosine.use_gt:

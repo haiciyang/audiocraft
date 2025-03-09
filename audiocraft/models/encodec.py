@@ -120,6 +120,9 @@ class CompressionModel(ABC, nn.Module):
         elif name in ['debug_compression_model']:
             logger.info("Getting pretrained compression model for debug")
             model = builders.get_debug_compression_model()
+        elif name in ['audiogen_encodec_16khz']:
+            logger.info("Getting pretrained Encodec_16khz compression model from facebook/audiogen-medium")
+            model = loaders.load_compression_model("facebook/audiogen-medium", device=device)
         elif Path(name).exists():
             # We assume here if the path exists that it is in fact an AC checkpoint
             # that was exported using `audiocraft.utils.export` functions.
