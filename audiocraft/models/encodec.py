@@ -393,7 +393,9 @@ class SQCodec(CompressionModel):
         dim_codebook=19683,
         n_codebook=4,
         bw=2,
+        emb_dim = 9, 
         clip_length=450,
+        hidden_dim = None, 
     ):
         """ Make sure to download checkpoint from https://huggingface.co/Dongchao/UniAudio/blob/main/SQ-Codec.zip
         """
@@ -413,6 +415,12 @@ class SQCodec(CompressionModel):
         self.n_codebook = n_codebook
         self.bw = bw
         self.mask_id = self.dim_codebook * self.n_codebook
+        self.emb_dim = emb_dim
+
+        if hidden_dim is not None and hidden_dim != emb_dim:
+            self.proj_layer = torch.nn.Linear(emb_dim, hidden_dim)
+        else:
+            self.proj_layer = None
     
     def build_codec_model(self,):
         scalar_codec = ScalarModel()  
@@ -462,7 +470,7 @@ class SQCodec(CompressionModel):
 
         Returns:
             codes, scale (tuple of torch.Tensor, torch.Tensor): Tuple composed of:
-                codes: a float tensor of shape [B, K, T] with K the number of codebooks used and T the timestep.
+                codes: a int tensor of shape [B, K, T] with K the number of codebooks used and T the timestep.
         """
         assert x.dim() == 3
         compressed = self.scalar_codec.encode(x) # B, dim, len
@@ -479,6 +487,31 @@ class SQCodec(CompressionModel):
         codec_ls = torch.stack(codec_ls, dim=1)
 
         return codec_ls.to('cuda'), None
+    
+    def encode_embedding(self, codes: torch.Tensor):
+        """ Get embedding from code (Int type) for encoding/training, as input to a LLM model
+        Args:
+            codes (torch.Tensor): Int tensor of shape [batch, num_codebooks, length]
+
+        Returns:
+            
+        """
+        assert codes.dim() == 3
+        with torch.no_grad():
+            codes = codes.permute(2, 0, 1)
+            in_embs = []
+            for i in range(self.num_codebooks):
+                tmp_list = decimal_to_ternary_matrix(in_tokens[i, :, :], D=self.emb_dim) - 1
+                in_embs.append(tmp_list)
+            in_embs = torch.stack(in_embs, dim=0).float().to(codes.device)  # Shape: (num_codebooks, B, D, T)
+            # Permute to match (B, T, num_codebook, D)
+            in_embs = in_embs.permute(1, 3, 0, 2)  # Shape: (3, 150, 4, 9)
+        
+        if self.proj_layer is not None:
+            in_embs = self.proj_layer(in_embs)
+        
+        return in_embs
+
 
     def decode(self, codes: torch.Tensor, scale: tp.Optional[torch.Tensor] = None):
         
@@ -498,13 +531,12 @@ class SQCodec(CompressionModel):
         return out
 
     def decode_latent(self, codes: torch.Tensor):
-        """ Get 
+        """ Get embedding from code (Int type) for decoding
         Args:
-            codes (torch.Tensor): Int tensor of shape [B, K, T]; K is the number of codebooks
+            codes (torch.Tensor, Int): Int tensor of shape [B, K, T]; K is the number of codebooks
 
         Returns:
-            codes, scale (tuple of torch.Tensor, torch.Tensor): Tuple composed of:
-                codes: a float tensor of shape [B, K, T] with K the number of codebooks used and T the timestep.
+            emb_quant (torch.Tensor, float)
         """
         assert codes.dim() == 3
 
@@ -512,7 +544,7 @@ class SQCodec(CompressionModel):
             codes[:, i, :] -= i * self.dim_codebook
         emb_quant = []
         for i in range(self.n_codebook):
-            tmp_list = decimal_to_ternary_matrix(codes[:, i, :], D=9) - 1
+            tmp_list = decimal_to_ternary_matrix(codes[:, i, :], D=self.emb_dim) - 1
             emb_quant.append(tmp_list)
         emb_quant = torch.cat(emb_quant, dim=1)
 
