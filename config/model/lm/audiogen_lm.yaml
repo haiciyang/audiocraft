@@ -34,3 +34,4 @@ transformer_lm:
   depthwise_init: current
   zero_bias_init: true
   attention_as_float32: false
+  scalar_embedding: false
