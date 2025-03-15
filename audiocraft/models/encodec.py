@@ -23,6 +23,7 @@ from transformers import EncodecModel as HFEncodecModel
 from .. import quantization as qt
 from ..utils import checkpoint
 from .scalarmodel import ScalarModel
+from .utils import decimal_to_ternary_matrix, ternary_matrix_to_decimal
 
 
 logger = logging.getLogger()
@@ -330,55 +331,6 @@ class DAC(CompressionModel):
         assert n >= 1
         assert n <= self.total_codebooks
         self.n_quantizers = n
-
-def decimal_to_ternary_matrix(decimals, D):
-    """
-    Convert a tensor of decimal numbers to a D*T ternary matrix for each batch.
-
-    Arguments
-    ---------
-    decimals : torch.Tensor
-        A 2D tensor of decimal numbers with shape (B, T), where B is the batch size
-        and T is the number of elements in each batch.
-    D : int
-        Number of ternary digits to represent each number (depth).
-
-    Returns
-    -------
-    torch.Tensor
-        A 3D tensor of shape (B, D, T) where each slice along the first dimension
-        corresponds to a batch, and each column is represented as a ternary number.
-    """
-    B, T = decimals.shape
-    ternary_matrix = torch.zeros((B, D, T), dtype=torch.long)
-    for pos in range(D):
-        ternary_matrix[:, pos, :] = decimals % 3  # Modulo operation
-        decimals //= 3  # Floor division for next ternary digit
-
-    return ternary_matrix
-
-
-def ternary_matrix_to_decimal(matrix):
-    """
-    Convert a D*N ternary matrix to a list of decimal numbers.
-    
-    Parameters:
-    - matrix: a 2D numpy array of shape (D, N) where each column is a ternary number.
-    
-    Returns:
-    - A list of integers, each representing the decimal equivalent of a ternary number.
-    """
-    B, D, N = matrix.shape  # B is the batch size, D is the number of digits, N is the number of ternary numbers
-    
-    powers_of_three = 3 ** np.arange(D)  # [3^0, 3^1, ..., 3^(D-1)]
-
-    # Reshape powers_of_three for broadcasting: [D] -> [1, D, 1]
-    powers_of_three = powers_of_three[:, np.newaxis]  # Shape [D, 1]
-
-    # Compute dot product using broadcasting: matrix * powers_of_three along D axis
-    decimals = np.sum(matrix * powers_of_three, axis=1)  # Sum along the D axis
-
-    return decimals
     
 class SQCodec(CompressionModel):
     """SQCodec adapted tokenizer version for LLM training
@@ -399,6 +351,7 @@ class SQCodec(CompressionModel):
         emb_dim = 9, 
         clip_length=450,
         hidden_dim = None, 
+        use_ternary=False,
     ):
         """ Make sure to download checkpoint from https://huggingface.co/Dongchao/UniAudio/blob/main/SQ-Codec.zip
         """
@@ -418,12 +371,15 @@ class SQCodec(CompressionModel):
         self.n_codebook = n_codebook
         self.bw = bw
         self.mask_id = self.dim_codebook * self.n_codebook
+
         self.emb_dim = emb_dim
 
         if hidden_dim is not None and hidden_dim != emb_dim:
             self.proj_layer = torch.nn.Linear(emb_dim, hidden_dim)
         else:
             self.proj_layer = None
+
+        self.use_ternary = use_ternary
     
     def build_codec_model(self,):
         scalar_codec = ScalarModel()  
@@ -446,13 +402,17 @@ class SQCodec(CompressionModel):
         """Set the active number of codebooks used by the quantizer.
         """
         assert n >= 1
-        assert n <= self.total_codebooks
         self.n_codebook = n
 
     @property
     def cardinality(self):
         """Cardinality of each codebook."""
         return self.dim_codebook
+    
+    def set_cardinality(self, n:int):
+        """Reset cardinality of each codebook."""
+        assert n >= 1
+        self.dim_codebook = n
     
     @property
     def channels(self) -> int:
@@ -477,13 +437,16 @@ class SQCodec(CompressionModel):
         """
         assert x.dim() == 3
         compressed = self.scalar_codec.encode(x) # B, dim, len
-        # compressed = compressed.squeeze(0) # dim, len
+
+        if self.use_ternary:
+            compressed = compressed.to(torch.int64) + 1 # ranging from 0, 1, 2 [bt, 36, 1500]
+            return compressed, None
+
         chunks = compressed.chunk(self.n_codebook, dim=1) # 
         codec_ls = []
         for i, chunk in enumerate(chunks):
-            # chunk = int(chunk.detach().cpu().numpy()) + 1
             chunk = chunk.detach().cpu().numpy() #.int() + 1
-            chunk= chunk.astype(np.int32) + 1 # .astype(np.int32)
+            chunk= chunk.astype(np.int32) + 1 # .astype(np.int32) # 
             tmp_codec = ternary_matrix_to_decimal(chunk) # 
             codec_ls.append(torch.from_numpy(tmp_codec).to(torch.int64))
 
@@ -528,8 +491,11 @@ class SQCodec(CompressionModel):
         """
 
         assert scale == None
-        emb_quant = self.decode_latent(codes)
-        out = self.scalar_codec.decode(emb_quant.float().to('cuda'))
+        if self.use_ternary:
+            codes = codes - 1 # ranging from -1, 0, 1; [bt, 36, 1500]
+        else:
+            codes = self.decode_latent(codes)
+        out = self.scalar_codec.decode(codes.float().to('cuda'))
 
         return out
 
@@ -543,8 +509,9 @@ class SQCodec(CompressionModel):
         """
         assert codes.dim() == 3
 
-        for i in range(self.n_codebook):
-            codes[:, i, :] -= i * self.dim_codebook
+        # for i in range(self.n_codebook):
+        #     codes[:, i, :] -= i * self.dim_codebook
+            
         emb_quant = []
         for i in range(self.n_codebook):
             tmp_list = decimal_to_ternary_matrix(codes[:, i, :], D=self.emb_dim) - 1
@@ -808,3 +775,20 @@ class InterleaveStereoCompressionModel(CompressionModel):
     def decode_latent(self, codes: torch.Tensor):
         """Decode from the discrete codes to continuous latent space."""
         raise NotImplementedError("Not supported by interleaved stereo wrapped models.")
+    
+    
+if __name__ == '__main__':
+    import torchaudio
+    import matplotlib.pyplot as plt
+    sqcodec = SQCodec(checkpoint_path='//reference/pretrained/SQ-Codec/ckpt_00190000.pth', use_ternary=True).to('cuda')
+    x, sr = torchaudio.load('/data/hy17/librispeech/librispeech/test-clean/121/121726/121-121726-0002.wav')
+    torchaudio.save('original.wav', x, sr,)
+    x =x.unsqueeze(0).to('cuda')
+    
+
+    q, _ = sqcodec.encode(x) # (1, 4, 150)
+    # print(torch.max(q), torch.min(q))
+    y = sqcodec.decode(q)
+    torchaudio.save('reconstructed.wav', y.squeeze(0).cpu(), sr, )
+
+

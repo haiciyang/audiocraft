@@ -296,6 +296,18 @@ def get_wrapped_compression_model(
     if hasattr(cfg, "compression_model_n_q"):
         if cfg.compression_model_n_q is not None:
             compression_model.set_num_codebooks(cfg.compression_model_n_q)
+    if hasattr(cfg, "compression_model_n_card"):
+        if cfg.compression_model_n_card is not None:
+            compression_model.set_cardinality(cfg.compression_model_n_card)
+    if hasattr(cfg, "sq_codec_use_ternary"):
+        if cfg.sq_codec_use_ternary:
+            try:
+                assert compression_model.__class__.__name__ == 'SQCodec'
+            except AssertionError:
+                print("Compression model is not SQCodec, cannot set use_ternary.")
+                import sys
+                sys.exit(1)
+            compression_model.use_ternary = cfg.sq_codec_use_ternary
     return compression_model
 
 

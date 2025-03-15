@@ -64,3 +64,18 @@ dataset/*
 
 # personal info
 config/teams/default.yaml
+*.wav
+*.png
+fad/
+clap/
+submit.sh
+sbatch_printout/
+saved_trainings/
+prepare_data/
+pretrained/
+*.txt
+*.sh
+.gitignore
+env_audiocraft.yml
+config/dset/audio/musiccaps.yaml
+config/solver/musicgen/musicgen_survey.yaml

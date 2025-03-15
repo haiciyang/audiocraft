@@ -12,6 +12,7 @@ import typing as tp
 
 import torch
 from torch import nn
+from einops import rearrange
 
 from ..utils import utils
 from ..modules.streaming import StreamingModule, State
@@ -27,6 +28,8 @@ from ..modules.conditioners import (
 )
 from ..modules.codebooks_patterns import CodebooksPatternProvider
 from ..modules.activations import get_activation_fn
+
+from .utils import decimal_to_ternary_matrix
 
 
 logger = logging.getLogger(__name__)
@@ -108,7 +111,6 @@ class ScaledEmbedding(nn.Embedding):
             group["lr"] = self.lr
         return group
 
-
 @dataclass
 class LMOutput:
     # The logits are already re-aligned with the input codes
@@ -148,7 +150,7 @@ class LMModel(StreamingModule):
                  emb_lr: tp.Optional[float] = None, bias_proj: bool = True,
                  weight_init: tp.Optional[str] = None, depthwise_init: tp.Optional[str] = None,
                  zero_bias_init: bool = False, cfg_dropout: float = 0, cfg_coef: float = 1.0,
-                 attribute_dropout: tp.Dict[str, tp.Dict[str, float]] = {}, two_step_cfg: bool = False,
+                 attribute_dropout: tp.Dict[str, tp.Dict[str, float]] = {}, two_step_cfg: bool = False, scalar_embedding=False, scalar_dim = 9, 
                  **kwargs):
         super().__init__()
         self.cfg_coef = cfg_coef
@@ -162,6 +164,11 @@ class LMModel(StreamingModule):
         self.dim = dim
         self.pattern_provider = pattern_provider
         self.two_step_cfg = two_step_cfg
+        self.scalar_embedding = scalar_embedding
+        self.scalar_dim = scalar_dim
+        
+        if scalar_embedding:
+            self.scalar_ln = nn.Linear(scalar_dim, dim // n_q) # (9, 256) for SQ-Codec
         self.emb = nn.ModuleList([ScaledEmbedding(embed_dim, dim, lr=emb_lr) for _ in range(n_q)])
         if 'activation' in kwargs:
             kwargs['activation'] = get_activation_fn(kwargs['activation'])
@@ -218,6 +225,30 @@ class LMModel(StreamingModule):
     def num_codebooks(self) -> int:
         return self.n_q
 
+    def get_scalar_embedding(self, decimals: int, D=9):
+        """ An implementation specifically applied to SQ-Codec, to experiment with different embedding methods for LLM method.
+
+        Args:
+            decimals (int): output of ternary_to_matric [bt, num_codebook, T]
+            D (int, optional):  Defaults to 9.
+
+        Returns:
+            emb_quant: _description_ [bt, num_codebook, T, D]
+        """
+        
+        emb_quant = []
+        for i in range(self.n_q):
+            tmp_list = decimal_to_ternary_matrix(decimals[:, i, :], D=9) - 1
+            emb_quant.append(tmp_list)
+        emb_quant = torch.stack(emb_quant, dim=1).float().to(decimals.device) # (b, num_codebook, D, T)
+        emb_quant = emb_quant.permute(0, 1, 3, 2) # (b, num_codebook, T, 9)
+        
+        emb_quant = self.scalar_ln(emb_quant) # (b, num_codebook, T, 256)
+        emb_quant = rearrange(emb_quant, 'b n t d -> b t (n d)') # (b, T, 1024)
+        
+        return emb_quant
+
+
     def forward(self, sequence: torch.Tensor,
                 conditions: tp.List[ConditioningAttributes],
                 condition_tensors: tp.Optional[ConditionTensors] = None,
@@ -241,7 +272,11 @@ class LMModel(StreamingModule):
         """
         B, K, S = sequence.shape
         assert K == self.num_codebooks, "Sequence shape must match the specified number of codebooks"
-        input_ = sum([self.emb[k](sequence[:, k]) for k in range(K)])
+        
+        if self.scalar_embedding:
+            input_ = self.get_scalar_embedding(sequence, D=9) # [B, S, D]
+        else:
+            input_ = sum([self.emb[k](sequence[:, k]) for k in range(K)])  # [B, S, D]
         if condition_tensors is None:
             assert not self._is_streaming, "Conditions tensors should be precomputed when streaming."
             # apply dropout modules
