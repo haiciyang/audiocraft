@@ -20,6 +20,9 @@ compression_model_checkpoint: ???
 # for stereo channels. If not provided, default value for the compression model
 # will be used.
 compression_model_n_q: null
+compression_model_n_card: null
+
+sq_codec_use_ternary: false
 
 tokens:
   padding_with_special_token: false
@@ -51,7 +54,7 @@ dataset:
 metrics:
   fad:
     use_gt: false
-    model: tf
+    model: torch
     tf:
       bin: null  # path to local frechet_audio_distance code
       model_path: //reference/fad/vggish_model.ckpt
