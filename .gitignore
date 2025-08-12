@@ -79,3 +79,4 @@ pretrained/
 env_audiocraft.yml
 config/dset/audio/musiccaps.yaml
 config/solver/musicgen/musicgen_survey.yaml
+config/dset/audio/fma_test.yaml
