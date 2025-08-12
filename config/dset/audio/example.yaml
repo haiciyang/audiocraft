@@ -2,9 +2,15 @@
 
 datasource:
   max_sample_rate: 44100
-  max_channels: 2
+  max_channels: 1
 
-  train: egs/example
-  valid: egs/example
-  evaluate: egs/example
-  generate: egs/example
+  train: egs/fma_local_train
+  valid: egs/fma_local_valid
+  evaluate: egs/fma_local_test
+  generate: egs/fma_local_test
+
+  # train: egs/fma_test
+  # valid: egs/fma_test
+  # evaluate: egs/fma_test
+  # generate: egs/fma_test
+ 

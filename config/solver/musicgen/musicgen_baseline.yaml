@@ -7,7 +7,6 @@ defaults:
   - musicgen/default
   - /model: lm/musicgen_lm
   - override /dset: audio/example
-  # - override /solver/musicgen/evaluation: objective_eval
   - _self_
 
 autocast: true
@@ -17,24 +16,19 @@ autocast_dtype: float16
 # with a total stride of 640 leading to 50 frames/s.
 # rvq.n_q=4, rvq.bins=2048, no quantization dropout
 # (transformer_lm card and n_q must be compatible)
-compression_model_checkpoint: //pretrained/facebook/encodec_32khz
+compression_model_checkpoint: null
 
 channels: 1
 sample_rate: 32000
+
 deadlock:
   use: true  # deadlock detection
 
 dataset:
-  batch_size: 32  # 8 GPUs
+  batch_size: 64  # 8 GPUs
   num_workers: 16
   sample_on_weight: false  # Uniform sampling all the way
   sample_on_duration: false  # Uniform sampling all the way
-
-conditioners:
-  description:
-    model: t5
-    t5:
-      name: t5-small
 
 generate:
   lm:

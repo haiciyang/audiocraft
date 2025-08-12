@@ -37,6 +37,7 @@ class StandardSolver(ABC, flashy.BaseSolver):
     """
     def __init__(self, cfg: omegaconf.DictConfig):
         super().__init__()
+
         self.logger.info(f"Instantiating solver {self.__class__.__name__} for XP {self.xp.sig}")
         self.logger.info(f"All XP logs are stored in {self.xp.folder}")
         self.cfg = cfg
@@ -332,6 +333,7 @@ class StandardSolver(ABC, flashy.BaseSolver):
         state: tp.Optional[dict] = None
         rank0_checkpoint_path = self.checkpoint_path(use_fsdp=False)
         current_checkpoint_path = self.checkpoint_path()
+
         _pretrained_prefix = '//pretrained/'
         continue_pretrained = (self.cfg.continue_from or '').startswith(_pretrained_prefix)
         if rank0_checkpoint_path.exists():

@@ -103,6 +103,7 @@ class CompressionModel(ABC, nn.Module):
             - dac_24khz (same)
             - facebook/encodec_24khz (https://huggingface.co/facebook/encodec_24khz)
             - facebook/encodec_32khz (https://huggingface.co/facebook/encodec_32khz)
+            - sqcodec () - make sure the checkpoints have been downloaded at //reference/pretrianed
             - your own model on Hugging Face. Export instructions to come...
         """
 
@@ -248,6 +249,8 @@ class EncodecModel(CompressionModel):
         x, scale = self.preprocess(x)
         emb = self.encoder(x)
         codes = self.quantizer.encode(emb)
+        # print(codecs.shape, type(codes), codecs[0, :, 2])
+        # fake()
         return codes, scale
 
     def decode(self, codes: torch.Tensor, scale: tp.Optional[torch.Tensor] = None):

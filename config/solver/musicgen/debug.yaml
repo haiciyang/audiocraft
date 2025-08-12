@@ -6,7 +6,7 @@ defaults:
   - musicgen/default
   - /model: lm/musicgen_lm
   - override /model/lm/model_scale: xsmall
-  - override /dset: audio/example
+  - override /dset: audio/debug
   - _self_
 
 autocast: false

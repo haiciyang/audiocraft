@@ -46,6 +46,7 @@ def get_solver(cfg):
             cfg.dataset[split].batch_size //= flashy.distrib.world_size()
     resolve_config_dset_paths(cfg)
     solver = solvers.get_solver(cfg)
+
     return solver
 
 
