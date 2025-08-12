@@ -63,7 +63,7 @@ dataset/*
 /notes
 
 # personal info
-config/teams/default.yaml
+# config/teams/default.yaml
 *.wav
 *.png
 fad/
